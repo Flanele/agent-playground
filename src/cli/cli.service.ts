@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { stdin as input, stdout as output } from 'node:process';
 import readline from 'node:readline/promises';
 import { AgentService } from 'src/agent/agent.service';
+import os from 'node:os';
 
 @Injectable()
 export class CliService {
@@ -22,6 +23,9 @@ export class CliService {
         text,
         model: 'gpt-5-mini',
         source: 'cli',
+        userMeta: {
+          name: os.userInfo().username,
+        },
       });
 
       console.log('Agent:', answer);
