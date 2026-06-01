@@ -10,10 +10,11 @@ import { AgentModule } from './agent/agent.module';
 import { OpenAiService } from './open-ai/open-ai.service';
 import { OpenAiModule } from './open-ai/open-ai.module';
 import { MemoryModule } from './memory/memory.module';
+import { ToolsService } from './tools/tools.service';
 
 @Module({
   imports: [CliModule, TelegramModule, AgentModule, OpenAiModule, MemoryModule],
   controllers: [AppController],
-  providers: [AppService, CliService, TelegramService, AgentService, OpenAiService],
+  providers: [AppService, CliService, TelegramService, AgentService, OpenAiService, ToolsService],
 })
 export class AppModule {}

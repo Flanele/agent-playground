@@ -7,6 +7,12 @@ import { BASE_INSTRUCTIONS } from './prompts/base-instructions';
 import { AgentSource, TelegramDecision } from './agent.types';
 import { StoredMessage } from 'src/memory/memory.types';
 import { parseTelegramDecision } from './utils/parse-telegram-decision';
+import { TOOL_DEFINITIONS } from 'src/tools/tool-definitions';
+import { ToolsService } from 'src/tools/tools.service';
+import type {
+  ResponseInput,
+  ResponseInputItem,
+} from 'openai/resources/responses/responses';
 
 type MessageMeta = {
   name?: string;
@@ -27,6 +33,7 @@ export class AgentService {
   constructor(
     private readonly openAiService: OpenAiService,
     private readonly memoryService: MemoryService,
+    private readonly toolsService: ToolsService,
   ) {}
 
   async handleMessage(params: HandleMessageParams): Promise<string> {
@@ -36,29 +43,61 @@ export class AgentService {
       meta: params.userMeta,
     });
 
-    const input = this.getOpenAiMessages(params.userId);
+    let input: ResponseInput = this.getOpenAiMessages(params.userId);
     const instructions = this.buildInstructions(params.source);
 
-    const response = await this.openAiService.createResponse({
-      model: params.model,
-      instructions,
-      input,
-    });
+    for (let step = 0; step <= 5; step++) {
+      const response = await this.openAiService.createResponse({
+        model: params.model,
+        instructions,
+        input,
+        tools: TOOL_DEFINITIONS,
+      });
 
-    const raw = response.output_text;
+      const toolCall = response.output.find(
+        (item) => item.type === 'function_call',
+      );
 
-    const assistantMemoryText =
-      params.source === 'telegram'
-        ? this.formatTelegramAssistantMemory(raw)
-        : raw;
+      if (!toolCall) {
+        const raw = response.output_text;
 
-    this.memoryService.addMessage(params.userId, {
-      role: 'assistant',
-      text: assistantMemoryText,
-      meta: params.botMeta,
-    });
+        const assistantMemoryText =
+          params.source === 'telegram'
+            ? this.formatTelegramAssistantMemory(raw)
+            : raw;
 
-    return raw;
+        this.memoryService.addMessage(params.userId, {
+          role: 'assistant',
+          text: assistantMemoryText,
+          meta: params.botMeta,
+        });
+
+        return raw;
+      }
+
+      console.log('Tool call:', toolCall);
+
+      const toolResponse = await this.toolsService.executeTool(
+        toolCall.name,
+        JSON.parse(toolCall.arguments),
+      );
+
+      const previousOutput = response.output as ResponseInputItem[];
+
+      input = [
+        ...input,
+        ...previousOutput,
+        {
+          type: 'function_call_output',
+          call_id: toolCall.call_id,
+          output: JSON.stringify(toolResponse),
+        },
+      ];
+
+      console.log('Tool response:', toolResponse);
+    }
+
+    throw new Error('Tool loop limit reached');
   }
 
   private getOpenAiMessages(userId: string) {
