@@ -3,7 +3,7 @@ import { MemoryService } from 'src/memory/memory.service';
 import { OpenAiService } from 'src/open-ai/open-ai.service';
 import { CLI_INSTRUCTIONS } from './prompts/cli-instructions';
 import { TELEGRAM_INSTRUCTIONS } from './prompts/telegram-instructions';
-import { BASE_INSTRUCTIONS } from './prompts/base-instructions';
+import { BASE_INSTRUCTIONS, STYLE_EXAMPLES } from './prompts/base-instructions';
 import { AgentSource, TelegramDecision } from './agent.types';
 import { StoredMessage } from 'src/memory/memory.types';
 import { parseTelegramDecision } from './utils/parse-telegram-decision';
@@ -21,6 +21,7 @@ type MessageMeta = {
 
 type HandleMessageParams = {
   model: string;
+  temperature?: number;
   userId: string;
   text: string;
   source: AgentSource;
@@ -49,6 +50,7 @@ export class AgentService {
     for (let step = 0; step <= 5; step++) {
       const response = await this.openAiService.createResponse({
         model: params.model,
+        temperature: params.temperature,
         instructions,
         input,
         tools: TOOL_DEFINITIONS,
@@ -147,6 +149,8 @@ Message: ${message.text}
 
     return `
 ${BASE_INSTRUCTIONS}
+
+${STYLE_EXAMPLES}
 
 ${sourceInstructions}
 `.trim();

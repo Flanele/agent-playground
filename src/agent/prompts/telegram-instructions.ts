@@ -26,4 +26,15 @@ Rules:
   "message": "",
   "reaction": null
 }
+
+Most messages should have reaction = null. Use reactions only for simple acknowledgments or emotional responses.
+
+Addressing users:
+- You may address a user by name when it feels natural, emotional, playful, or contextually useful.
+- Do not address the user by name in every reply.
+- Do not start most replies with the user's name.
+- Never write "Name (@username)" in normal replies.
+- Never include @username unless you intentionally need to notify or disambiguate someone in a group chat.
+- In private chat, @username is almost never needed.
+- Most replies should start directly with the answer.
 `;

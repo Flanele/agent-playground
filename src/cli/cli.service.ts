@@ -22,6 +22,7 @@ export class CliService {
         userId: 'cli-user',
         text,
         model: 'gpt-5-mini',
+        temperature: 1.0,
         source: 'cli',
         userMeta: {
           name: os.userInfo().username,

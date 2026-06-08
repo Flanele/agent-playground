@@ -4,12 +4,16 @@ import { AgentService } from 'src/agent/agent.service';
 import chalk from 'chalk';
 import { parseTelegramDecision } from 'src/agent/utils/parse-telegram-decision';
 import { TelegramEmoji } from 'telegraf/types';
+import { ChatStorageService } from './chat-storage.service';
 
 @Injectable()
 export class TelegramService {
   private bot: Telegraf;
 
-  constructor(private readonly agentService: AgentService) {
+  constructor(
+    private readonly agentService: AgentService,
+    private readonly chatStorageService: ChatStorageService,
+  ) {
     const token = process.env.BOT_TOKEN;
 
     if (!token) {
@@ -21,13 +25,39 @@ export class TelegramService {
 
   async start() {
     this.bot.use(async (ctx, next) => {
-      const username = ctx.from?.first_name ?? 'unknown';
-      const text =
-        ctx.message && 'text' in ctx.message ? ctx.message.text : undefined;
-
-      if (text) {
-        console.log(`${chalk.cyan(username)}: ${text}`);
+      if (!ctx.message || !ctx.chat || !ctx.from || !('text' in ctx.message)) {
+        return next();
       }
+
+      const text = ctx.message.text;
+      const username = ctx.from?.first_name ?? 'unknown';
+
+      console.log(`${chalk.cyan(username)}: ${text}`);
+
+      const result = await this.chatStorageService.saveUserMessage({
+        id: ctx.message.message_id,
+        chatId: ctx.chat.id,
+        chatType: ctx.chat.type,
+        text,
+        sentAt: new Date(ctx.message.date * 1000).toISOString(),
+        replyToMessageId: ctx.message.reply_to_message?.message_id,
+        from: {
+          id: ctx.from.id,
+          name: ctx.from.first_name,
+          username: ctx.from.username,
+        },
+      });
+
+      if (result.shouldExtractMemory) {
+        const messages =
+          await this.chatStorageService.extractUnprocessedMessages(
+            result.chatId,
+          );
+
+        console.log('MESSAGES FOR MEMORY:', messages);
+
+        await this.chatStorageService.markMemoryExtracted(result.chatId);
+      }  // доделать обработку воспоминаний
 
       const originalReply = ctx.reply.bind(ctx);
 
@@ -63,6 +93,7 @@ export class TelegramService {
         const raw = await this.agentService.handleMessage({
           model: 'gpt-5-mini',
           source: 'telegram',
+          temperature: 1.0,
           userId: `telegram:${ctx.chat.id}`,
           text,
           userMeta: {
@@ -99,11 +130,23 @@ export class TelegramService {
         }
 
         if (decision.shouldReply && decision.message) {
-          console.log(`${chalk.magenta('BOT')}: ${decision.message}`);
-
-          await ctx.reply(decision.message, {
+          const sentMessage = await ctx.reply(decision.message, {
             reply_parameters: {
               message_id: ctx.message.message_id,
+            },
+          });
+
+          await this.chatStorageService.saveBotMessage({
+            id: sentMessage.message_id,
+            chatId: ctx.chat.id,
+            chatType: ctx.chat.type,
+            text: decision.message,
+            sentAt: new Date(sentMessage.date * 1000).toISOString(),
+            replyToMessageId: ctx.message.message_id,
+            from: {
+              id: ctx.botInfo.id,
+              name: ctx.botInfo.first_name,
+              username: ctx.botInfo.username,
             },
           });
         }
