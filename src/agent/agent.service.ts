@@ -3,7 +3,7 @@ import { MemoryService } from 'src/memory/memory.service';
 import { OpenAiService } from 'src/open-ai/open-ai.service';
 import { CLI_INSTRUCTIONS } from './prompts/cli-instructions';
 import { TELEGRAM_INSTRUCTIONS } from './prompts/telegram-instructions';
-import { BASE_INSTRUCTIONS } from './prompts/base-instructions';
+import { BASE_INSTRUCTIONS, STYLE_EXAMPLES } from './prompts/base-instructions';
 import { AgentSource, TelegramDecision } from './agent.types';
 import { StoredMessage } from 'src/memory/memory.types';
 import { parseTelegramDecision } from './utils/parse-telegram-decision';
@@ -13,6 +13,9 @@ import type {
   ResponseInput,
   ResponseInputItem,
 } from 'openai/resources/responses/responses';
+import { ChatMessage, MemoryEntry } from 'src/telegram/chat-storage.types';
+import { MEMORY_INSTRUCTIONS } from './prompts/memory_instructions';
+import { parseMemoryDecision } from './utils/parse-memory-decision';
 
 type MessageMeta = {
   name?: string;
@@ -21,11 +24,13 @@ type MessageMeta = {
 
 type HandleMessageParams = {
   model: string;
+  temperature?: number;
   userId: string;
   text: string;
   source: AgentSource;
   userMeta?: MessageMeta;
   botMeta?: MessageMeta;
+  chatId?: number;
 };
 
 @Injectable()
@@ -35,6 +40,29 @@ export class AgentService {
     private readonly memoryService: MemoryService,
     private readonly toolsService: ToolsService,
   ) {}
+
+  async handleMemory(
+    memories: MemoryEntry[],
+    messages: ChatMessage[],
+  ): Promise<string[]> {
+    const response = await this.openAiService.createResponse({
+      model: 'gpt-5-mini',
+      instructions: MEMORY_INSTRUCTIONS,
+      input: [
+        {
+          role: 'user',
+          content: JSON.stringify({
+            existingMemories: memories,
+            newMessages: messages,
+          }),
+        },
+      ],
+    });
+
+    const decision = parseMemoryDecision(response.output_text);
+
+    return decision.memories;
+  }
 
   async handleMessage(params: HandleMessageParams): Promise<string> {
     this.memoryService.addMessage(params.userId, {
@@ -49,6 +77,7 @@ export class AgentService {
     for (let step = 0; step <= 5; step++) {
       const response = await this.openAiService.createResponse({
         model: params.model,
+        temperature: params.temperature,
         instructions,
         input,
         tools: TOOL_DEFINITIONS,
@@ -80,6 +109,9 @@ export class AgentService {
       const toolResponse = await this.toolsService.executeTool(
         toolCall.name,
         JSON.parse(toolCall.arguments),
+        {
+          chatId: params.chatId,
+        },
       );
 
       const previousOutput = response.output as ResponseInputItem[];
@@ -147,6 +179,8 @@ Message: ${message.text}
 
     return `
 ${BASE_INSTRUCTIONS}
+
+${STYLE_EXAMPLES}
 
 ${sourceInstructions}
 `.trim();

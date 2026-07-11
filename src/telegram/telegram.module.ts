@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { TelegramService } from './telegram.service';
 import { AgentModule } from 'src/agent/agent.module';
+import { ChatStorageService } from './chat-storage.service';
 
 @Module({})
 export class TelegramModule {
   imports: [AgentModule];
-  providers: [TelegramService];
+  providers: [TelegramService, ChatStorageService];
 }
