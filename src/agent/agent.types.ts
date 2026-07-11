@@ -6,6 +6,10 @@ export type TelegramDecision = {
   reaction: string | null;
 };
 
+export type MemoryDecision = {
+  memories: string[];
+}
+
 export type UserMeta = {
   name?: string;
   username?: string;

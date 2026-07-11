@@ -13,6 +13,9 @@ import type {
   ResponseInput,
   ResponseInputItem,
 } from 'openai/resources/responses/responses';
+import { ChatMessage, MemoryEntry } from 'src/telegram/chat-storage.types';
+import { MEMORY_INSTRUCTIONS } from './prompts/memory_instructions';
+import { parseMemoryDecision } from './utils/parse-memory-decision';
 
 type MessageMeta = {
   name?: string;
@@ -27,6 +30,7 @@ type HandleMessageParams = {
   source: AgentSource;
   userMeta?: MessageMeta;
   botMeta?: MessageMeta;
+  chatId?: number;
 };
 
 @Injectable()
@@ -36,6 +40,29 @@ export class AgentService {
     private readonly memoryService: MemoryService,
     private readonly toolsService: ToolsService,
   ) {}
+
+  async handleMemory(
+    memories: MemoryEntry[],
+    messages: ChatMessage[],
+  ): Promise<string[]> {
+    const response = await this.openAiService.createResponse({
+      model: 'gpt-5-mini',
+      instructions: MEMORY_INSTRUCTIONS,
+      input: [
+        {
+          role: 'user',
+          content: JSON.stringify({
+            existingMemories: memories,
+            newMessages: messages,
+          }),
+        },
+      ],
+    });
+
+    const decision = parseMemoryDecision(response.output_text);
+
+    return decision.memories;
+  }
 
   async handleMessage(params: HandleMessageParams): Promise<string> {
     this.memoryService.addMessage(params.userId, {
@@ -82,6 +109,9 @@ export class AgentService {
       const toolResponse = await this.toolsService.executeTool(
         toolCall.name,
         JSON.parse(toolCall.arguments),
+        {
+          chatId: params.chatId,
+        },
       );
 
       const previousOutput = response.output as ResponseInputItem[];

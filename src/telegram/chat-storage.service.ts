@@ -71,6 +71,13 @@ export class ChatStorageService {
     await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
   }
 
+  async extractMemories(chatId: number) {
+    const filePath = this.getChatFilePath(chatId);
+    const data = await this.readChatStorage(filePath);
+
+    return data.memories;
+  }
+
   private async saveMessage(message: ChatMessage): Promise<SaveMessageResult> {
     const filePath = this.getChatFilePath(message.chatId);
 

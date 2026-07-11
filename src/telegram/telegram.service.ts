@@ -54,10 +54,27 @@ export class TelegramService {
             result.chatId,
           );
 
+        const memories = await this.chatStorageService.extractMemories(
+          result.chatId,
+        );
+
         console.log('MESSAGES FOR MEMORY:', messages);
+        console.log('MEMORIES:', memories);
+
+        const newMemories = await this.agentService.handleMemory(
+          memories,
+          messages,
+        );
+
+        for (const memory of newMemories) {
+          await this.chatStorageService.writeMemoryToStorage(
+            result.chatId,
+            memory,
+          );
+        }
 
         await this.chatStorageService.markMemoryExtracted(result.chatId);
-      }  // доделать обработку воспоминаний
+      }
 
       const originalReply = ctx.reply.bind(ctx);
 
@@ -104,6 +121,7 @@ export class TelegramService {
             name: ctx.botInfo.first_name,
             username: ctx.botInfo.username,
           },
+          chatId: ctx.chat.id,
         });
 
         const decision = parseTelegramDecision(raw);
