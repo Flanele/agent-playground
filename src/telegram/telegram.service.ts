@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { Telegraf } from 'telegraf';
+import { Context, Telegraf } from 'telegraf';
 import { AgentService } from 'src/agent/agent.service';
 import chalk from 'chalk';
 import { parseTelegramDecision } from 'src/agent/utils/parse-telegram-decision';
 import { TelegramEmoji } from 'telegraf/types';
 import { ChatStorageService } from './chat-storage.service';
+import { ImageInput } from './telegram.types';
 
 @Injectable()
 export class TelegramService {
@@ -23,13 +24,106 @@ export class TelegramService {
     this.bot = new Telegraf(token);
   }
 
+  private async handleTelegramResponse(
+    ctx: Context,
+    raw: string,
+  ): Promise<void> {
+    const decision = parseTelegramDecision(raw);
+
+    if (decision.reaction) {
+      try {
+        await ctx.telegram.callApi('setMessageReaction', {
+          chat_id: ctx.chat!.id,
+          message_id: ctx.message!.message_id,
+          reaction: [
+            {
+              type: 'emoji',
+              emoji: decision.reaction as TelegramEmoji,
+            },
+          ],
+        });
+      } catch (error) {
+        console.error(`${chalk.red('REACTION ERROR')}:`, error);
+      }
+    }
+
+    if (!decision.shouldReply || !decision.message) {
+      return;
+    }
+
+    const sentMessage = await ctx.reply(decision.message, {
+      reply_parameters: {
+        message_id: ctx.message!.message_id,
+      },
+    });
+
+    await this.chatStorageService.saveBotMessage({
+      id: sentMessage.message_id,
+      chatId: ctx.chat!.id,
+      chatType: ctx.chat!.type,
+      text: decision.message,
+      sentAt: new Date(sentMessage.date * 1000).toISOString(),
+      replyToMessageId: ctx.message!.message_id,
+      from: {
+        id: ctx.botInfo.id,
+        name: ctx.botInfo.first_name,
+        username: ctx.botInfo.username,
+      },
+    });
+  }
+
+  private async getTelegramImage(
+    ctx: Context,
+  ): Promise<ImageInput | undefined> {
+    if (!ctx.message || !('photo' in ctx.message)) {
+      return undefined;
+    }
+
+    const photo = ctx.message.photo.at(-1);
+
+    if (!photo) {
+      return undefined;
+    }
+
+    const fileUrl = await ctx.telegram.getFileLink(photo.file_id);
+    const response = await fetch(fileUrl);
+
+    if (!response.ok) {
+      throw new Error(`Failed to download Telegram image: ${response.status}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    return {
+      dataUrl: `data:image/jpeg;base64,${buffer.toString('base64')}`,
+    };
+  }
+
   async start() {
     this.bot.use(async (ctx, next) => {
-      if (!ctx.message || !ctx.chat || !ctx.from || !('text' in ctx.message)) {
+      if (!ctx.message || !ctx.chat || !ctx.from) {
         return next();
       }
 
-      const text = ctx.message.text;
+      const hasText = 'text' in ctx.message;
+      const hasPhoto = 'photo' in ctx.message;
+
+      if (!hasText && !hasPhoto) {
+        return next();
+      }
+
+      let text: string;
+
+      if (hasText) {
+        text = ctx.message.text;
+      } else {
+        const caption = ctx.message.caption?.trim();
+
+        text = caption
+          ? `[Image attached]\nCaption: ${caption}`
+          : '[Image attached]';
+      }
+
       const username = ctx.from?.first_name ?? 'unknown';
 
       console.log(`${chalk.cyan(username)}: ${text}`);
@@ -124,50 +218,53 @@ export class TelegramService {
           chatId: ctx.chat.id,
         });
 
-        const decision = parseTelegramDecision(raw);
+        await this.handleTelegramResponse(ctx, raw);
+      } finally {
+        clearInterval(typingInterval);
+      }
+    });
 
-        if (decision.reaction) {
-          try {
-            await ctx.telegram.callApi('setMessageReaction', {
-              chat_id: ctx.chat.id,
-              message_id: ctx.message.message_id,
-              reaction: [
-                {
-                  type: 'emoji',
-                  emoji: decision.reaction as TelegramEmoji,
-                },
-              ],
-            });
+    this.bot.on('photo', async (ctx) => {
+      const repliedMessage = ctx.message.reply_to_message;
+      const caption = ctx.message.caption ?? '';
 
-            console.log(
-              `${chalk.magenta('BOT')} reacted with ${decision.reaction}`,
-            );
-          } catch (error) {
-            console.error(`${chalk.red('REACTION ERROR')}:`, error);
-          }
-        }
+      const isPrivate = ctx.chat.type === 'private';
+      const isReplyToBot = repliedMessage?.from?.id === ctx.botInfo.id;
+      const isMentioned = caption.includes(`@${ctx.botInfo.username}`);
 
-        if (decision.shouldReply && decision.message) {
-          const sentMessage = await ctx.reply(decision.message, {
-            reply_parameters: {
-              message_id: ctx.message.message_id,
-            },
-          });
+      if (!isPrivate && !isReplyToBot && !isMentioned) {
+        return;
+      }
 
-          await this.chatStorageService.saveBotMessage({
-            id: sentMessage.message_id,
-            chatId: ctx.chat.id,
-            chatType: ctx.chat.type,
-            text: decision.message,
-            sentAt: new Date(sentMessage.date * 1000).toISOString(),
-            replyToMessageId: ctx.message.message_id,
-            from: {
-              id: ctx.botInfo.id,
-              name: ctx.botInfo.first_name,
-              username: ctx.botInfo.username,
-            },
-          });
-        }
+      const typingInterval = setInterval(() => {
+        ctx.sendChatAction('typing').catch(console.error);
+      }, 1000);
+
+      try {
+        await ctx.sendChatAction('typing');
+
+        const image = await this.getTelegramImage(ctx);
+        const text = caption || 'Что изображено на этой картинке?';
+
+        const raw = await this.agentService.handleMessage({
+          model: 'gpt-5-mini',
+          source: 'telegram',
+          temperature: 1.0,
+          userId: `telegram:${ctx.chat.id}`,
+          text,
+          image,
+          userMeta: {
+            name: ctx.from.first_name,
+            username: ctx.from.username,
+          },
+          botMeta: {
+            name: ctx.botInfo.first_name,
+            username: ctx.botInfo.username,
+          },
+          chatId: ctx.chat.id,
+        });
+
+        await this.handleTelegramResponse(ctx, raw);
       } finally {
         clearInterval(typingInterval);
       }

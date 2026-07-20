@@ -22,11 +22,16 @@ type MessageMeta = {
   username?: string;
 };
 
+type ImageInput = {
+  dataUrl: string;
+};
+
 type HandleMessageParams = {
   model: string;
   temperature?: number;
   userId: string;
   text: string;
+  image?: ImageInput;
   source: AgentSource;
   userMeta?: MessageMeta;
   botMeta?: MessageMeta;
@@ -73,6 +78,32 @@ export class AgentService {
 
     let input: ResponseInput = this.getOpenAiMessages(params.userId);
     const instructions = this.buildInstructions(params.source);
+
+    if (params.image) {
+      const lastMessage = input[input.length - 1];
+
+      input = [
+        ...input.slice(0, -1),
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                'content' in lastMessage &&
+                typeof lastMessage.content === 'string'
+                  ? lastMessage.content
+                  : params.text,
+            },
+            {
+              type: 'input_image',
+              image_url: params.image.dataUrl,
+              detail: 'auto',
+            },
+          ],
+        },
+      ];
+    }
 
     for (let step = 0; step <= 5; step++) {
       const response = await this.openAiService.createResponse({
