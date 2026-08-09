@@ -34,4 +34,7 @@ export const TOOL_DEFINITIONS: Tool[] = [
     },
     strict: true,
   },
+  {
+    type: 'image_generation',
+  }
 ];

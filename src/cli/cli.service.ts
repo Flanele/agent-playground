@@ -18,7 +18,7 @@ export class CliService {
         break;
       }
 
-      const answer = await this.agentService.handleMessage({
+      const result = await this.agentService.handleMessage({
         userId: 'cli-user',
         text,
         model: 'gpt-5-mini',
@@ -29,7 +29,11 @@ export class CliService {
         },
       });
 
-      console.log('Agent:', answer);
+      if (result.source !== 'cli') {
+        throw new Error('Expected CLI result');
+      }
+
+      console.log('Agent:', result.text);
     }
 
     rl.close();

@@ -4,7 +4,13 @@ import { OpenAiService } from 'src/open-ai/open-ai.service';
 import { CLI_INSTRUCTIONS } from './prompts/cli-instructions';
 import { TELEGRAM_INSTRUCTIONS } from './prompts/telegram-instructions';
 import { BASE_INSTRUCTIONS, STYLE_EXAMPLES } from './prompts/base-instructions';
-import { AgentSource, TelegramDecision } from './agent.types';
+import {
+  AgentArtifact,
+  AgentResult,
+  AgentSource,
+  HandleMessageParams,
+  TelegramDecision,
+} from './agent.types';
 import { StoredMessage } from 'src/memory/memory.types';
 import { parseTelegramDecision } from './utils/parse-telegram-decision';
 import { TOOL_DEFINITIONS } from 'src/tools/tool-definitions';
@@ -16,27 +22,6 @@ import type {
 import { ChatMessage, MemoryEntry } from 'src/telegram/chat-storage.types';
 import { MEMORY_INSTRUCTIONS } from './prompts/memory_instructions';
 import { parseMemoryDecision } from './utils/parse-memory-decision';
-
-type MessageMeta = {
-  name?: string;
-  username?: string;
-};
-
-type ImageInput = {
-  dataUrl: string;
-};
-
-type HandleMessageParams = {
-  model: string;
-  temperature?: number;
-  userId: string;
-  text: string;
-  image?: ImageInput;
-  source: AgentSource;
-  userMeta?: MessageMeta;
-  botMeta?: MessageMeta;
-  chatId?: number;
-};
 
 @Injectable()
 export class AgentService {
@@ -69,7 +54,7 @@ export class AgentService {
     return decision.memories;
   }
 
-  async handleMessage(params: HandleMessageParams): Promise<string> {
+  async handleMessage(params: HandleMessageParams): Promise<AgentResult> {
     this.memoryService.addMessage(params.userId, {
       role: 'user',
       text: params.text,
@@ -114,11 +99,11 @@ export class AgentService {
         tools: TOOL_DEFINITIONS,
       });
 
-      const toolCall = response.output.find(
+      const functionCall = response.output.find(
         (item) => item.type === 'function_call',
       );
 
-      if (!toolCall) {
+      if (!functionCall) {
         const raw = response.output_text;
 
         const assistantMemoryText =
@@ -132,14 +117,41 @@ export class AgentService {
           meta: params.botMeta,
         });
 
-        return raw;
+        if (params.source === 'cli') {
+          return {
+            source: 'cli',
+            text: raw,
+          };
+        }
+
+        const artifacts: AgentArtifact[] = response.output
+          .filter((item) => item.type === 'image_generation_call')
+          .flatMap((item) => {
+            if (!item.result) {
+              return [];
+            }
+
+            return [
+              {
+                type: 'image',
+                data: Buffer.from(item.result, 'base64'),
+                mimeType: 'image/png',
+              },
+            ];
+          });
+
+        return {
+          source: 'telegram',
+          raw,
+          artifacts,
+        };
       }
 
-      console.log('Tool call:', toolCall);
+      console.log('Tool call:', functionCall);
 
       const toolResponse = await this.toolsService.executeTool(
-        toolCall.name,
-        JSON.parse(toolCall.arguments),
+        functionCall.name,
+        JSON.parse(functionCall.arguments),
         {
           chatId: params.chatId,
         },
@@ -152,7 +164,7 @@ export class AgentService {
         ...previousOutput,
         {
           type: 'function_call_output',
-          call_id: toolCall.call_id,
+          call_id: functionCall.call_id,
           output: JSON.stringify(toolResponse),
         },
       ];

@@ -8,7 +8,7 @@ export type TelegramDecision = {
 
 export type MemoryDecision = {
   memories: string[];
-}
+};
 
 export type UserMeta = {
   name?: string;
@@ -22,5 +22,33 @@ export type AgentResult =
     }
   | {
       source: 'telegram';
-      decision: TelegramDecision;
+      raw: string;
+      artifacts: AgentArtifact[];
     };
+
+export type MessageMeta = {
+  name?: string;
+  username?: string;
+};
+
+export type ImageInput = {
+  dataUrl: string;
+};
+
+export type HandleMessageParams = {
+  model: string;
+  temperature?: number;
+  userId: string;
+  text: string;
+  image?: ImageInput;
+  source: AgentSource;
+  userMeta?: MessageMeta;
+  botMeta?: MessageMeta;
+  chatId?: number;
+};
+
+export type AgentArtifact = {
+  type: 'image';
+  data: Buffer;
+  mimeType: 'image/png';
+};

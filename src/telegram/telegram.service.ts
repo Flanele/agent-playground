@@ -1,11 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { Context, Telegraf } from 'telegraf';
+import { Context, Input, Telegraf } from 'telegraf';
 import { AgentService } from 'src/agent/agent.service';
 import chalk from 'chalk';
 import { parseTelegramDecision } from 'src/agent/utils/parse-telegram-decision';
 import { TelegramEmoji } from 'telegraf/types';
 import { ChatStorageService } from './chat-storage.service';
-import { ImageInput } from './telegram.types';
+import { ImageInput, TelegramAgentResult } from './telegram.types';
 
 @Injectable()
 export class TelegramService {
@@ -21,14 +21,18 @@ export class TelegramService {
       throw new Error('BOT_TOKEN is missing');
     }
 
-    this.bot = new Telegraf(token);
+    this.bot = new Telegraf(token, {
+      handlerTimeout: 180_000,
+    });
   }
 
   private async handleTelegramResponse(
     ctx: Context,
-    raw: string,
+    result: TelegramAgentResult,
   ): Promise<void> {
-    const decision = parseTelegramDecision(raw);
+    const decision = parseTelegramDecision(result.raw);
+
+    console.log(`${chalk.yellow('TELEGRAM DECISION')}:`, decision);
 
     if (decision.reaction) {
       try {
@@ -47,15 +51,32 @@ export class TelegramService {
       }
     }
 
-    if (!decision.shouldReply || !decision.message) {
-      return;
+    let sentMessage;
+
+    if (result.artifacts.length > 0) {
+      for (const artifact of result.artifacts) {
+        await ctx.sendChatAction('upload_photo');
+
+        sentMessage = await ctx.replyWithPhoto(
+          Input.fromBuffer(artifact.data, 'generated-image.png'),
+          {
+            caption: decision.message || undefined,
+            // @ts-expect-error legacy Telegram Bot API field
+            reply_to_message_id: ctx.message!.message_id,
+          },
+        );
+      }
+    } else if (decision.shouldReply && decision.message) {
+      sentMessage = await ctx.reply(decision.message, {
+        reply_parameters: {
+          message_id: ctx.message!.message_id,
+        },
+      });
     }
 
-    const sentMessage = await ctx.reply(decision.message, {
-      reply_parameters: {
-        message_id: ctx.message!.message_id,
-      },
-    });
+    if (!sentMessage || !decision.message) {
+      return;
+    }
 
     await this.chatStorageService.saveBotMessage({
       id: sentMessage.message_id,
@@ -196,12 +217,12 @@ export class TelegramService {
 
       const typingInterval = setInterval(() => {
         ctx.sendChatAction('typing').catch(console.error);
-      }, 1000);
+      }, 4000);
 
       try {
         await ctx.sendChatAction('typing');
 
-        const raw = await this.agentService.handleMessage({
+        const result = await this.agentService.handleMessage({
           model: 'gpt-5-mini',
           source: 'telegram',
           temperature: 1.0,
@@ -218,7 +239,13 @@ export class TelegramService {
           chatId: ctx.chat.id,
         });
 
-        await this.handleTelegramResponse(ctx, raw);
+        if (result.source !== 'telegram') {
+          throw new Error('Expected Telegram agent result');
+        }
+
+        clearInterval(typingInterval);
+
+        await this.handleTelegramResponse(ctx, result);
       } finally {
         clearInterval(typingInterval);
       }
@@ -238,7 +265,7 @@ export class TelegramService {
 
       const typingInterval = setInterval(() => {
         ctx.sendChatAction('typing').catch(console.error);
-      }, 1000);
+      }, 4000);
 
       try {
         await ctx.sendChatAction('typing');
@@ -246,7 +273,7 @@ export class TelegramService {
         const image = await this.getTelegramImage(ctx);
         const text = caption || 'Что изображено на этой картинке?';
 
-        const raw = await this.agentService.handleMessage({
+        const result = await this.agentService.handleMessage({
           model: 'gpt-5-mini',
           source: 'telegram',
           temperature: 1.0,
@@ -264,7 +291,13 @@ export class TelegramService {
           chatId: ctx.chat.id,
         });
 
-        await this.handleTelegramResponse(ctx, raw);
+        if (result.source !== 'telegram') {
+          throw new Error('Expected Telegram agent result');
+        }
+
+        clearInterval(typingInterval);
+
+        await this.handleTelegramResponse(ctx, result);
       } finally {
         clearInterval(typingInterval);
       }
